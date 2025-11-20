@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from supabase import create_client
 from dotenv import load_dotenv
 import pytz
+import math
 
 
 BEIRUT_TZ = pytz.timezone("Asia/Beirut")
@@ -249,6 +250,8 @@ def finalize_round(round_number: int):
                 avg_p = avg_price.get((channel, cake), my_price)
 
                 demand = max(0, alpha - beta * my_price + gamma * (avg_p - my_price))
+                demand = math.floor(demand)
+                qty = math.floor(qty)
                 sold = min(qty, demand)
 
                 revenue = sold * my_price

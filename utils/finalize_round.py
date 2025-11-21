@@ -216,6 +216,7 @@ def finalize_round(round_number: int):
 
             total_profit = 0.0
             total_transport = 0.0
+            total_packaging_cost = 0
 
             # Ingredient costs
             ing_needs = compute_required_ingredients(plan_json)
@@ -263,6 +264,7 @@ def finalize_round(round_number: int):
                 packaging_cost = sold * float(packaging_map.get(cake, 0))
                 total_profit += revenue - transport - packaging_cost
                 total_transport += transport
+                total_packaging_cost += packaging_cost
 
             # Update team financials
             team_data = supabase.table("teams").select("money, stock_value").eq("team_name", team).execute().data[0]
@@ -278,6 +280,7 @@ def finalize_round(round_number: int):
                 "last_profit": total_profit,
                 "last_transport_cost": total_transport,
                 "last_resource_cost": total_resource_cost,
+                "last_packaging_cost": total_packaging_cost,
                 "last_finalized_round": round_number
             }).eq("team_name", team).execute()
 

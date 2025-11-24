@@ -358,7 +358,7 @@ st.markdown(
         font-size: 1.05rem;
     ">
         💡 <strong>Note:</strong> Submitting production plan can only be done <u>once per round</u>.
-        After you click <em>Submit Production Plan</em>, you won't be able to edit them again for this round.
+        After you click <em>Submit Production Plan</em>, you won't be able to edit it again for this round.
     </div>
     """,
     unsafe_allow_html=True,

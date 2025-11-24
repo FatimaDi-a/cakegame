@@ -640,6 +640,8 @@ try:
     else:
         inv_df = pd.DataFrame(investments)
 
+        st.write(inv_df[["round_number", "total_cost_usd", "ingredients_json", "capacity_json"]])
+
         # Group by ROUND instead of by DATE
         for rnd, group in inv_df.groupby("round_number", sort=False):
 

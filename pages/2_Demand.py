@@ -16,7 +16,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 from supabase import create_client
 import pytz
-
+import math
 
 
 BEIRUT_TZ = pytz.timezone("Asia/Beirut")
@@ -634,10 +634,10 @@ if st.button("📊 Calculate Demand"):
 
             if round_number == 1:
                 D = max(0, alpha - beta * my_price)
-                D = int(D)
+                D = math.floor(D)
             else:
                 D = max(0, alpha - beta * my_price + gamma * (avg_other - my_price))
-                D = int(D)
+                D = math.floor(D)
             results.append(
                 {
                     "Cake": cake,
@@ -788,7 +788,7 @@ if st.session_state.saving_prices:
                     D = max(
                         0, alpha - beta * my_price + gamma * (avg_other - my_price)
                     )
-                D = int(D)
+                D = math.floor(D)
 
                 demand_results.append(
                     {

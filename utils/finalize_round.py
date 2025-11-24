@@ -252,7 +252,7 @@ def finalize_round(round_number: int):
             for item in plan_json:
                 cake = item["cake"]
                 channel = item["channel"]
-                qty = int(item["qty"])
+                qty = math.floor(item["qty"])
 
                 my_price = float(
                     team_prices[
@@ -272,10 +272,10 @@ def finalize_round(round_number: int):
                 alpha, beta, gamma = params["alpha"].iloc[0], params["beta"].iloc[0], params["gamma_competition"].iloc[0]
                 avg_p = avg_price.get((channel, cake), my_price)
 
-                demand = int(alpha - beta * my_price + gamma * (avg_p - my_price))
+                demand = math.floor(alpha - beta * my_price + gamma * (avg_p - my_price))
                 demand = max(0,demand)
-                demand = int(demand)
-                qty = int(float(item["qty"]))
+                demand = math.floor(demand)
+                qty = math.floor(float(item["qty"]))
 
                 sold = min(qty, demand)
 

@@ -570,118 +570,38 @@ col1.metric("Cash Value", f"${current_balance:,.2f}")
 col2.metric("Total Investment", f"${total_investment:,.2f}")
 col3.metric("Remaining After Purchase", f"${remaining:,.2f}")
 
-# ============================
-# 💾 SAVE TO SUPABASE
-# ============================
-if total_investment > current_balance:
-    st.error("⚠️ You exceeded your budget! Please adjust your quantities.")
-else:
-    
-    if submissions_locked(supabase):
-        st.error("🚫 Submissions are locked by the instructor.")
-    else:
-        if not st.session_state.investment_saved:
-            if st.button("💾 Save Investment"):  
-                if total_investment == 0:
-                    st.warning("⚠️ Please enter some investment before saving.")
-                else:
-                    try:
-                        # 2️⃣ Insert investment record
-                        payload = {
-                            "team_name": st.session_state.team_name,
-                            "round_number": current_round,
-                            "ingredients_json": json.dumps(ingredient_entries),
-                            "capacity_json": json.dumps(capacity_entries),
-                            "total_cost_usd": total_investment,
-                        }
-                        supabase.table("investments").insert(payload).execute()
-    
-                        # 3️⃣ Update INGREDIENT inventory
-                        for item in ingredient_entries:
-                            name = item["ingredient"]
-                            qty = item["buy_qty"]
-    
-                            existing = supabase.table("inventory") \
-                                .select("id, quantity") \
-                                .eq("team_name", st.session_state.team_name) \
-                                .eq("resource_name", name) \
-                                .eq("category", "ingredient") \
-                                .maybe_single()\
-                                .execute()
-    
-                            if existing and existing.data:
-                                new_qty = existing.data["quantity"] + qty
-                                supabase.table("inventory").update(
-                                    {"quantity": new_qty}
-                                ).eq("id", existing.data["id"]).execute()
-                            else:
-                                supabase.table("inventory").insert({
-                                    "team_name": st.session_state.team_name,
-                                    "category": "ingredient",
-                                    "resource_name": name,
-                                    "quantity": qty,
-                                    "unit": item["unit"]
-                                }).execute()
-    
-                        # 4️⃣ Update CAPACITY inventory
-                        for item in capacity_entries:
-                            name = item["display_name"]
-                            qty = item["hours"]
-    
-                            existing = supabase.table("inventory") \
-                                .select("id, quantity") \
-                                .eq("team_name", st.session_state.team_name) \
-                                .eq("resource_name", name) \
-                                .eq("category", "capacity") \
-                                .maybe_single()\
-                                .execute()
-    
-                            if existing and existing.data:
-                                new_qty = existing.data["quantity"] + qty
-                                supabase.table("inventory").update(
-                                    {"quantity": new_qty}
-                                ).eq("id", existing.data["id"]).execute()
-                            else:
-                                supabase.table("inventory").insert({
-                                    "team_name": st.session_state.team_name,
-                                    "category": "capacity",
-                                    "resource_name": name,
-                                    "quantity": qty,
-                                    "unit": "hours"
-                                }).execute()
-    
-                        # 5️⃣ Update team finances
-                        team_resp = supabase.table("teams") \
-                            .select("money, stock_value") \
-                            .eq("team_name", st.session_state.team_name) \
-                            .maybe_single() \
-                            .execute()
-    
-                        current_money = float(team_resp.data["money"])
-                        current_stock = float(team_resp.data["stock_value"])
-    
-                        new_money = current_money - total_investment
-                        new_stock = current_stock + total_investment
-    
-                        supabase.table("teams").update(
-                            {"money": new_money, "stock_value": new_stock}
-                        ).eq("team_name", st.session_state.team_name).execute()
-    
-                        st.session_state.money = new_money
-                        st.session_state.stock_value = new_stock
-    
-                        st.success("✅ Investment saved successfully!")
-                        st.session_state.investment_saved = True
-                        st.rerun()
-                        
-    
-                    except Exception as e:
-                        st.error("❌ Failed to save investment.")
-                        st.exception(e)
-    
-        else:
-            st.info("💾 Investment already saved. Refresh the page to save again.")
 
+# Initialize session flags
+if "saving_investment" not in st.session_state:
+    st.session_state.saving_investment = False
+if "investment_saved" not in st.session_state:
+    st.session_state.investment_saved = False
+
+if st.session_state.saving_investment and not st.session_state.investment_saved:
+    try:
+        # 🚀 Single atomic call
+        supabase.rpc(
+            "save_investment_atomic",
+            {
+                "p_team_name": st.session_state.team_name,
+                "p_round": current_round,
+                "p_ingredients": ingredient_entries,
+                "p_capacity": capacity_entries,
+                "p_total": total_investment
+            }
+        ).execute()
+
+        # update frontend state
+        st.session_state.investment_saved = True
+        st.session_state.saving_investment = False
+
+        st.success("✅ Investment saved successfully!")
+        st.rerun()
+
+    except Exception as e:
+        st.session_state.saving_investment = False
+        st.error("❌ Failed to save investment.")
+        st.exception(e)
 
 
 # ============================

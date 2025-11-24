@@ -751,12 +751,21 @@ for r in history:
     with st.expander(
         f"Round {r['round_number']} — Expected Profit ${r['profit_usd']:,.2f}"
     ):
-        df = pd.DataFrame(json.loads(r["plan_json"]))
+        raw_plan = r["plan_json"]
+
+        # If Supabase returned JSON as str, parse it.
+        # If it's already a list/dict, use it directly.
+        if isinstance(raw_plan, str):
+            plan_json = json.loads(raw_plan)
+        else:
+            plan_json = raw_plan
+        
+        df = pd.DataFrame(plan_json)
         if not df.empty:
             pivot = df.pivot(index="cake", columns="channel", values="qty").fillna(0)
             pivot = pivot.reset_index().rename(columns={"cake": "Cake"})
             st.dataframe(pivot, use_container_width=True)
-
+            
 # ======================================
 # 🚪 LOGOUT
 # ======================================

@@ -291,15 +291,8 @@ st.write(f"Welcome, **{st.session_state.team_name}** 👋")
 # =====================================
 st.subheader("📅 View Leaderboard by Round")
 
-selected_round = st.number_input(
-    "Select Round",
-    min_value=1,
-    max_value=current_round,
-    value=current_round,
-    step=1
-)
 
-st.markdown(f"📊 Showing results up to **Round {selected_round}**")
+st.markdown(f"📊 Showing results up to **Round {current_round}**")
 
 # =====================================
 # 📊 LOAD LEADERBOARD DATA

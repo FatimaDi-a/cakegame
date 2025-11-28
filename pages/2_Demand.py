@@ -351,6 +351,17 @@ if cakes_df.empty or channels_df.empty:
     st.error("❌ Missing data: please ensure cakes and channels exist.")
     st.stop()
 
+# =====================================
+# 📌 LOAD PRICE CAPS
+# =====================================
+caps_path = os.path.join(os.path.dirname(__file__), "..", "data", "price_caps.csv")
+price_caps_df = pd.read_csv(caps_path)
+
+# Build lookup: (channel, cake) → max_price
+price_caps = {
+    (row["channel"], row["cake"]): float(row["max_price"])
+    for _, row in price_caps_df.iterrows()
+}
 
 # =====================================
 # 🔒 CHECK IF PRICES ALREADY FINALIZED FOR THIS ROUND
@@ -403,45 +414,88 @@ try:
     # Fetch ALL competitor prices from the immediate previous round
     prev_round = round_number - 1
 
+    # =====================================================
+    # 1) Load production plans for previous round (if any)
+    # =====================================================
     if prev_round > 0:
-        prev_prices_data = (
-            supabase.table("prices")
-            .select("team_name, prices_json, round_number")
+        prev_plans_resp = (
+            supabase.table("production_plans")
+            .select("team_name, plan_json")
             .eq("round_number", prev_round)
             .execute()
-            .data
         )
+        prev_plans = prev_plans_resp.data or []
+    else:
+        prev_plans = []
+    
+    produced_last_round = {}
+    
+    for row in prev_plans:
+        team = row.get("team_name")
+        raw_plan = row.get("plan_json")
+    
+        try:
+            plan_json = raw_plan if isinstance(raw_plan, list) else json.loads(raw_plan or "[]")
+        except Exception:
+            plan_json = []
+    
+        cakes = {item.get("cake") for item in plan_json if "cake" in item}
+        produced_last_round[team] = cakes
+    
+    # =====================================================
+    # 2) Load previous round price submissions (if any)
+    # =====================================================
+    if prev_round > 0:
+        prev_prices_resp = (
+            supabase.table("prices")
+            .select("team_name, prices_json")
+            .eq("round_number", prev_round)
+            .execute()
+        )
+        prev_prices_data = prev_prices_resp.data or []
     else:
         prev_prices_data = []
-
-    if prev_prices_data:
-        prev_rows = []
-
-        # Unpack all price entries from all teams
-        for rec in prev_prices_data:
-            for p in json.loads(rec["prices_json"]):
-                prev_rows.append(
-                    {
-                        "channel": p["channel"],
-                        "cake": p["cake"],
-                        "price_usd": p["price_usd"],
-                    }
-                )
-
+    
+    # =====================================================
+    # 3) Filter ONLY prices of cakes the team actually produced
+    # =====================================================
+    prev_rows = []
+    
+    for rec in prev_prices_data:
+        team = rec.get("team_name")
+        raw_prices = rec.get("prices_json")
+    
+        try:
+            prices_list = raw_prices if isinstance(raw_prices, list) else json.loads(raw_prices or "[]")
+        except Exception:
+            prices_list = []
+    
+        for p in prices_list:
+            cake = p.get("cake")
+            channel = p.get("channel")
+    
+            # ONLY accept price if team produced that cake
+            if team in produced_last_round and cake in produced_last_round[team]:
+                prev_rows.append({
+                    "team_name": team,
+                    "cake": cake,
+                    "channel": channel,
+                    "price_usd": p.get("price_usd", 0),
+                })
+    
+    # =====================================================
+    # 4) Compute avg price safely
+    # =====================================================
+    if prev_rows:
         prev_prices_df = pd.DataFrame(prev_rows)
-
-        # True average across all teams: (channel, cake)
         avg_prices = (
             prev_prices_df.groupby(["channel", "cake"])["price_usd"]
             .mean()
             .to_dict()
         )
-
-        st.info(f"ℹ️ Using competitor prices from Round {prev_round} as baseline.")
-
     else:
         avg_prices = {}
-        st.warning("⚠️ No prior competitor prices found for previous round.")
+
 
 except Exception as e:
     avg_prices = {}
@@ -466,7 +520,8 @@ prefill_map = {}  # (channel, cake) → price_usd
 
 if today_prices_rec:
     try:
-        loaded_prices = json.loads(today_prices_rec[0]["prices_json"])
+        prices_raw = today_prices_rec[0]["prices_json"]
+        loaded_prices = prices_raw if isinstance(prices_raw, list) else json.loads(prices_raw)
         for p in loaded_prices:
             key = (p["channel"], p["cake"])
             prefill_map[key] = float(p["price_usd"])
@@ -522,7 +577,13 @@ for _, ch_row in channels_df.iterrows():
 # 📝 Show Table to User
 # ============================
 
-st.markdown("Enter your selling prices for each cake and channel below:")
+st.markdown("""
+### Enter your selling prices for each cake and channel below:
+
+💡 **Note:**  
+Each price must be between **0** and its allowed maximum value.  
+Even if you enter a higher value, it will **automatically be reduced** to the allowed maximum when saved.
+""")
 
 edited_prices = st.data_editor(
     pricing_df,
@@ -545,15 +606,22 @@ for _, row in edited_prices.iterrows():
 
     for _, ch_row in channels_df.iterrows():
         channel = ch_row["channel"]
-        price = float(row[channel])
 
-        if price > 0:
+        raw_price = float(row[channel])
+
+        # lookup max allowed price (default: infinity)
+        max_allowed = price_caps.get((channel, cake), float("inf"))
+
+        # enforce bounds
+        clean_price = max(0, min(raw_price, max_allowed))
+
+        if clean_price > 0:
             pricing_entries.append(
                 {
                     "team_name": st.session_state.team_name,
                     "channel": channel,
                     "cake": cake,
-                    "price_usd": price,
+                    "price_usd": clean_price,
                     "transport_cost_usd": float(
                         channels_df.loc[
                             channels_df["channel"] == channel,
@@ -562,6 +630,7 @@ for _, row in edited_prices.iterrows():
                     ),
                 }
             )
+
 
 # =====================================
 # 📊 CALCULATE DEMAND (TEST)
@@ -581,37 +650,75 @@ if st.button("📊 Calculate Demand"):
         )
 
         # First round: no previous competition data
+        # First round: no previous competition data
         if round_number == 1:
-            prev_prices_data = []
+            avg_prices_round = {}
         else:
             prev_round = round_number - 1
-            prev_prices_data = (
-                supabase.table("prices")
-                .select("team_name, prices_json, round_number")
+        
+            # Load production plans for previous round
+            prev_plans_resp = (
+                supabase.table("production_plans")
+                .select("team_name, plan_json")
                 .eq("round_number", prev_round)
                 .execute()
-                .data
             )
-
-        if prev_prices_data:
+            prev_plans = prev_plans_resp.data or []
+        
+            produced_last_round = {}
+            for row in prev_plans:
+                team = row.get("team_name")
+                raw_plan = row.get("plan_json")
+        
+                try:
+                    plan_json = raw_plan if isinstance(raw_plan, list) else json.loads(raw_plan or "[]")
+                except Exception:
+                    plan_json = []
+        
+                cakes = {item.get("cake") for item in plan_json if "cake" in item}
+                produced_last_round[team] = cakes
+        
+            # Load prices but only keep those for cakes the team produced
+            prev_prices_resp = (
+                supabase.table("prices")
+                .select("team_name, prices_json")
+                .eq("round_number", prev_round)
+                .execute()
+            )
+            prev_prices_data = prev_prices_resp.data or []
+        
             prev_rows = []
             for rec in prev_prices_data:
-                for p in json.loads(rec["prices_json"]):
-                    prev_rows.append(
-                        {
-                            "team_name": rec["team_name"],
-                            "channel": p["channel"],
-                            "cake": p["cake"],
-                            "price_usd": p["price_usd"],
-                        }
-                    )
-            prev_prices_df = pd.DataFrame(prev_rows)
-            avg_prices_round = (
-                prev_prices_df.groupby(["channel", "cake"])["price_usd"].mean().to_dict()
-            )
-        else:
-            avg_prices_round = {}
-            st.info("ℹ️ No previous-round prices found — using 0 as competitor baseline.")
+                team = rec.get("team_name")
+                raw_prices = rec.get("prices_json")
+        
+                try:
+                    prices_list = raw_prices if isinstance(raw_prices, list) else json.loads(raw_prices or "[]")
+                except Exception:
+                    prices_list = []
+        
+                for p in prices_list:
+                    cake = p.get("cake")
+                    channel = p.get("channel")
+                    if team in produced_last_round and cake in produced_last_round[team]:
+                        prev_rows.append({
+                            "team_name": team,
+                            "cake": cake,
+                            "channel": channel,
+                            "price_usd": p.get("price_usd", 0),
+                        })
+        
+            # Compute average
+            if prev_rows:
+                prev_prices_df = pd.DataFrame(prev_rows)
+                avg_prices_round = (
+                    prev_prices_df.groupby(["channel", "cake"])["price_usd"]
+                    .mean()
+                    .to_dict()
+                )
+            else:
+                avg_prices_round = {}
+                st.info("ℹ️ No previous-round prices found — using 0 as competitor baseline.")
 
         results = []
         for entry in pricing_entries:
@@ -742,7 +849,10 @@ if st.session_state.saving_prices:
 
                 prev_rows = []
                 for rec in prev_prices_data:
-                    for p in json.loads(rec["prices_json"]):
+                    prices_raw = rec["prices_json"]
+                    prices_list = prices_raw if isinstance(prices_raw, list) else json.loads(prices_raw)
+                    
+                    for p in prices_list:
                         prev_rows.append(
                             {
                                 "team_name": rec["team_name"],
